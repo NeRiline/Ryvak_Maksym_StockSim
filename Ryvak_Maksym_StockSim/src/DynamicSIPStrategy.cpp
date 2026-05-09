@@ -3,6 +3,8 @@
 #include <iomanip> // For output formatting
 #include <sstream> // For parameter formatting
 #include <vector>
+#include <cmath>
+#include <algorithm> // For std::max and std::min, which are used for calculating drawdown and other metrics
 
 using namespace std;
 
@@ -137,9 +139,128 @@ SimResult DynamicSIPStrategy::backtest(PriceHistory* history,
                 rallyPct = (node.close - low) / low * 100.0;
             }
 
+            // --- Trend filter and adaptive multiplier ---
+            // Compute simple indicators from the trailing window when available
+            auto getNthFromLast = [&](int n) -> double {
+                // n = 0 => most recent (current pushed value), n = 1 => 1-day ago, etc.
+                if (trailingCloses.count <= n) return 0.0;
+                int idx = (trailingCloses.head - 1 - n + trailingCloses.capacity) % trailingCloses.capacity;
+                return trailingCloses.values[idx];
+            };
+
+            auto computeMA = [&](int days) -> double {
+                if (trailingCloses.count < days) return 0.0;
+                double sum = 0.0;
+                for (int i = 0; i < days; ++i) {
+                    sum += getNthFromLast(i);
+                }
+                return sum / days;
+            };
+
+            // 50-day and 200-day moving averages (approx trading days)
+            double ma50 = computeMA(50);
+            double ma200 = computeMA(200);
+
+            // 6-month return (~126 trading days)
+            double sixMonthPrice = getNthFromLast(126);
+            double sixMonthReturn = 0.0;
+            if (sixMonthPrice > 0.0) {
+                sixMonthReturn = (node.close - sixMonthPrice) / sixMonthPrice * 100.0;
+            }
+
+            // Volatility: stddev of daily returns over last 63 days (~quarter)
+            double vol = 0.0; // annualized volatility
+            int volWindow = 63;
+            if (trailingCloses.count > volWindow) {
+                double sumR = 0.0;
+                double sumR2 = 0.0;
+                int actual = 0;
+                double prev = getNthFromLast(volWindow);
+                for (int i = volWindow - 1; i >= 0; --i) {
+                    double today = getNthFromLast(i);
+                    if (prev > 0.0) {
+                        double r = (today - prev) / prev;
+                        sumR += r;
+                        sumR2 += r * r;
+                        ++actual;
+                    }
+                    prev = today;
+                }
+                if (actual > 1) {
+                    double mean = sumR / actual;
+                    double variance = (sumR2 - actual * mean * mean) / (actual - 1);
+                    if (variance < 0.0) variance = 0.0;
+                    double dailyStd = sqrt(variance);
+                    vol = dailyStd * sqrt(252.0);
+                }
+            }
+
+            // Determine broader trend: positive if ANY of these are true
+            bool positiveTrend = false;
+            if (ma200 > 0.0 && node.close > ma200) positiveTrend = true;
+            if (ma50 > 0.0 && ma200 > 0.0 && ma50 > ma200) positiveTrend = true;
+            if (sixMonthReturn > 0.0) positiveTrend = true;
+
+            // Long downtrend detection: is 200-day MA falling vs 30 days ago?
+            bool longDowntrend = false;
+            if (trailingCloses.count > 230) {
+                // compare current 200MA to 200MA 30 days ago
+                // compute 200MA 30 days ago by averaging values from 230..259 ago (rough proxy)
+                double sumOld = 0.0;
+                int countOld = 0;
+                for (int i = 230; i < 230 + 30 && i < trailingCloses.count; ++i) {
+                    sumOld += getNthFromLast(i);
+                    ++countOld;
+                }
+                if (countOld == 30) {
+                    double ma200_30 = sumOld / countOld; // rough proxy
+                    if (ma200 > 0.0 && ma200 < ma200_30) longDowntrend = true;
+                }
+            }
+
             double planned = monthlyCapital;
+
             if (dipPct >= dipThreshold) {
-                planned = monthlyCapital * multiplier;
+                // Only apply aggressive multiplier when the broader trend is positive
+                if (!positiveTrend) {
+                    // trend negative: fall back to fixed SIP (no extra multiplier)
+                    planned = monthlyCapital;
+                } else {
+                    // adaptive multiplier: scale with dip depth and temper with volatility
+                    double base = multiplier;
+
+                    // Dip depth factor (how deep relative to threshold)
+                    double depthRatio = 1.0;
+                    if (dipThreshold > 0.0) {
+                        depthRatio = dipPct / dipThreshold;
+                    } else {
+                        depthRatio = 1.0;
+                    }
+                    if (depthRatio < 1.0) depthRatio = 1.0;
+                    if (depthRatio > 3.0) depthRatio = 3.0;
+
+                    double depthScale = 1.0 + 0.5 * (depthRatio - 1.0); // modest scaling
+
+                    // Volatility scaling: prefer moderate volatility, reduce when extreme
+                    double volScale = 1.0;
+                    if (vol <= 0.15) volScale = 1.2;        // low vol => slightly more aggressive
+                    else if (vol <= 0.30) volScale = 1.0;   // normal
+                    else if (vol <= 0.50) volScale = 0.8;   // high vol => reduce
+                    else volScale = 0.6;                    // extreme vol => conservative
+
+                    double adaptive = base * depthScale * volScale;
+
+                    // Cap adaptive multiplier in long downtrend
+                    if (longDowntrend) {
+                        adaptive = min(adaptive, base * 1.5);
+                    }
+
+                    // Absolute caps
+                    if (adaptive < 1.0) adaptive = 1.0;
+                    if (adaptive > 6.0) adaptive = 6.0;
+
+                    planned = monthlyCapital * adaptive;
+                }
             } else if (rallyPct >= rallyThreshold) {
                 planned = monthlyCapital * 0.5;
             }
