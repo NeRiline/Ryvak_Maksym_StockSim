@@ -702,9 +702,21 @@ void parameterSweep(ETF* spy, double monthlyCapital, int startYear, int endYear,
         double finalValue;
     };
     vector<SweepResult> results;
-    for (double dip = dipStart; dip <= dipEnd + 1e-9; dip += dipStep) {
-        for (double rally = rallyStart; rally <= rallyEnd + 1e-9; rally += rallyStep) {
-            for (double mult = multStart; mult <= multEnd + 1e-9; mult += multStep) {
+    for (int dipIndex = 0; ; ++dipIndex) {
+        double dip = dipStart + (dipIndex * dipStep);
+        if (dip > dipEnd + 1e-9) {
+            break;
+        }
+        for (int rallyIndex = 0; ; ++rallyIndex) {
+            double rally = rallyStart + (rallyIndex * rallyStep);
+            if (rally > rallyEnd + 1e-9) {
+                break;
+            }
+            for (int multIndex = 0; ; ++multIndex) {
+                double mult = multStart + (multIndex * multStep);
+                if (mult > multEnd + 1e-9) {
+                    break;
+                }
                 DynamicSIPStrategy strategy(dip, rally, mult);
                 SimResult result = strategy.backtest(spy->getHistory(), monthlyCapital, startYear, endYear);
 
