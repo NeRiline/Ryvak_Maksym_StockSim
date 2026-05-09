@@ -23,6 +23,7 @@
 #include <limits>
 #include <iomanip>
 #include <vector>
+#include <sstream>
 #include <algorithm>
 #include <cctype>
 
@@ -63,11 +64,17 @@ void menuExecuteOrder(Portfolio& portfolio);
 void menuUndoTrade(Portfolio& portfolio);
 void menuRunStrategy(StockManager<ETF>& etfManager, StockManager<Stock>& stockManager);
 void menuCompareStrategies(StockManager<ETF>& etfManager);
+void menuParameterSweep(StockManager<ETF>& etfManager);
 void menuPortfolioSummary(Portfolio& portfolio);
 void menuTradeHistory(Portfolio& portfolio);
 
 // Bonus
-void parameterSweep(ETF* spy, double monthlyCapital, int startYear, int endYear, StockBST& bst);
+void parameterSweep(ETF* spy, double monthlyCapital, int startYear, int endYear,
+                    double dipStart, double dipEnd, double dipStep,
+                    double rallyStart, double rallyEnd, double rallyStep,
+                    double multStart, double multEnd, double multStep,
+                    int topN,
+                    StockBST& bst);
 
 // ---------------------------------------------------------------
 // Utility: print the main menu
@@ -91,6 +98,7 @@ void printMenu(const string& studentName, const string& studentID) {
     cout << "[13]  Compare all strategies head-to-head\n";
     cout << "[14]  Display portfolio summary\n";
     cout << "[15]  Display full trade history\n";
+    cout << "[16]  Dynamic SIP grid search (bonus)\n";
     cout << " [0]  Exit\n";
     cout << "-------------------------------------------------\n";
     cout << "Enter choice: ";
@@ -140,8 +148,9 @@ int main() {
             case 13: menuCompareStrategies(etfManager);                             break;
             case 14: menuPortfolioSummary(portfolio);                               break;
             case 15: menuTradeHistory(portfolio);                                   break;
+            case 16: menuParameterSweep(etfManager);                                break;
             case  0: cout << "Goodbye, " << studentName << "!\n";                  break;
-            default: cout << "Invalid choice. Please enter 0–15.\n";               break;
+            default: cout << "Invalid choice. Please enter 0–16.\n";               break;
         }
     }
 
@@ -589,6 +598,81 @@ void menuCompareStrategies(StockManager<ETF>& etfManager) {
     printRow(rGolden);
     printRow(rMomentum);
 }
+// ---------------------------------------------------------------
+// Prompts user for parameter ranges, then runs a grid search over the DynamicSIPStrategy parameters and stores results in a BST
+void menuParameterSweep(StockManager<ETF>& etfManager) {
+    ETF* spx = etfManager.findByTicker("SPX");
+    if (!spx || !spx->getHistory()) {
+        cout << "SPX data not loaded. Please load it first.\n";
+        return;
+    }
+
+    double monthlyCapital = 0.0;
+    int startYear = 0;
+    int endYear = 0;
+    cout << "Monthly capital: ";
+    cin >> monthlyCapital;
+    cout << "Start year: ";
+    cin >> startYear;
+    cout << "End year: ";
+    cin >> endYear;
+
+    double dipStart = 3.0;
+    double dipEnd = 20.0;
+    double dipStep = 1.0;
+    cout << "Dip threshold start (%): ";
+    cin >> dipStart;
+    cout << "Dip threshold end (%): ";
+    cin >> dipEnd;
+    cout << "Dip threshold step (%): ";
+    cin >> dipStep;
+
+    double rallyStart = 6.0;
+    double rallyEnd = 18.0;
+    double rallyStep = 2.0;
+    cout << "Rally threshold start (%): ";
+    cin >> rallyStart;
+    cout << "Rally threshold end (%): ";
+    cin >> rallyEnd;
+    cout << "Rally threshold step (%): ";
+    cin >> rallyStep;
+
+    double multStart = 1.5;
+    double multEnd = 3.0;
+    double multStep = 0.5;
+    cout << "Multiplier start: ";
+    cin >> multStart;
+    cout << "Multiplier end: ";
+    cin >> multEnd;
+    cout << "Multiplier step: ";
+    cin >> multStep;
+
+    int topN = 20;
+    cout << "Top N results to display (0 = all): ";
+    cin >> topN;
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+    if (dipStep <= 0.0 || rallyStep <= 0.0 || multStep <= 0.0) {
+        cout << "Step values must be greater than 0.\n";
+        return;
+    }
+    if (dipStart > dipEnd || rallyStart > rallyEnd || multStart > multEnd) {
+        cout << "Start values must be <= end values.\n";
+        return;
+    }
+    if (topN < 0) {
+        cout << "Top N must be 0 or greater.\n";
+        return;
+    }
+
+    StockBST sweepBST;
+    parameterSweep(spx, monthlyCapital, startYear, endYear,
+                   dipStart, dipEnd, dipStep,
+                   rallyStart, rallyEnd, rallyStep,
+                   multStart, multEnd, multStep,
+                   topN,
+                   sweepBST);
+}
 
 void menuPortfolioSummary(Portfolio& portfolio) {
     portfolio.printHoldings();
@@ -601,21 +685,64 @@ void menuTradeHistory(Portfolio& portfolio) {
 // ---------------------------------------------------------------
 // BONUS: Parameter Sweep for DynamicSIPStrategy
 // ---------------------------------------------------------------
-void parameterSweep(ETF* spy, double monthlyCapital, int startYear, int endYear, StockBST& bst) {
+void parameterSweep(ETF* spy, double monthlyCapital, int startYear, int endYear,
+                    double dipStart, double dipEnd, double dipStep,
+                    double rallyStart, double rallyEnd, double rallyStep,
+                    double multStart, double multEnd, double multStep,
+                    int topN,
+                    StockBST& bst) {
     if (!spy || !spy->getHistory()) {
         cout << "SPX data not loaded.\n";
         return;
     }
 
-    for (double dip = 3.0; dip <= 20.0; dip += 1.0) {
-        DynamicSIPStrategy strategy(dip, 10.0, 2.0);
-        SimResult result = strategy.backtest(spy->getHistory(), monthlyCapital, startYear, endYear);
-        string label = "dip=" + to_string(static_cast<int>(dip)) + "%";
-        bst.insert(label, result.finalValue, 0);
+    int totalRuns = 0;
+    struct SweepResult {
+        string label;
+        double finalValue;
+    };
+    vector<SweepResult> results;
+    for (double dip = dipStart; dip <= dipEnd + 1e-9; dip += dipStep) {
+        for (double rally = rallyStart; rally <= rallyEnd + 1e-9; rally += rallyStep) {
+            for (double mult = multStart; mult <= multEnd + 1e-9; mult += multStep) {
+                DynamicSIPStrategy strategy(dip, rally, mult);
+                SimResult result = strategy.backtest(spy->getHistory(), monthlyCapital, startYear, endYear);
+
+                ostringstream label;
+                label << fixed << setprecision(1)
+                      << "dip=" << dip << "% "
+                      << "rally=" << rally << "% "
+                      << setprecision(2) << "mult=" << mult;
+
+                string labelText = label.str();
+                bst.insert(labelText, result.finalValue, 0);
+                results.push_back(SweepResult{labelText, result.finalValue});
+                totalRuns++;
+            }
+        }
     }
 
-    cout << "\nParameter sweep results (worst -> best):\n";
-    bst.inorder();
+    cout << "\nGrid search runs: " << totalRuns << "\n";
+
+    if (topN == 0) {
+        cout << "\nParameter sweep results (worst -> best):\n";
+        bst.inorder();
+    } else {
+        sort(results.begin(), results.end(), [](const SweepResult& a, const SweepResult& b) {
+            return a.finalValue > b.finalValue;
+        });
+
+        int count = topN;
+        if (count > static_cast<int>(results.size())) {
+            count = static_cast<int>(results.size());
+        }
+
+        cout << "\nTop " << count << " results:\n";
+        for (int i = 0; i < count; ++i) {
+            cout << results[i].label << "  $" << fixed << setprecision(2)
+                 << results[i].finalValue << "\n";
+        }
+    }
 
     StockBST::BSTNode* best = bst.findMax();
     if (best) {
