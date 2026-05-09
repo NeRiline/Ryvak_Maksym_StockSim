@@ -568,7 +568,7 @@ void menuCompareStrategies(StockManager<ETF>& etfManager) {
     cin.ignore(numeric_limits<streamsize>::max(), '\n');
 
     FixedSIPStrategy fixedStrategy;
-    DynamicSIPStrategy dynamic(5.0, 10.0, 2.0);
+    DynamicSIPStrategy dynamic(27, 0, 3); // example parameters, can be changed
     GoldenCrossStrategy golden;
     MomentumStrategy momentum;
 
