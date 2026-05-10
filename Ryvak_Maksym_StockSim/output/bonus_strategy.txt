@@ -1,0 +1,19 @@
+Strategy Name           : Dynamic SIP (Regime, panic=32.5%, drain=0.70)
+monthlyCapital          = $500
+startYear               = 2000
+endYear                 = 2020
+ticker                  = SPX
+
+Algorithm Description   :
+This strategy combines a macro trend filter with a mean-reversion panic override. By default, it uses a 200-day moving average to detect market regimes: it hoards the $500 monthly capital in cash during bear markets (price < 200-day MA) and deploys it during bull markets (price > 200-day MA). However, if the market crashes so violently that the current price stretches more than 32.5% below the 200-day MA, it triggers a "rubber band" override. It immediately begins buying the panic dip, draining the accumulated cash hoard aggressively at a 70% monthly rate to maximize share accumulation at the generational bottom.
+
+Parameters Used         :
+dipThreshold   = 32.5 (Panic Override trigger)
+rallyThreshold = 0.0  (Neutralized)
+multiplier     = 0.70 (Hoard Drain Rate)
+
+Final Portfolio Value   : $287,232.87
+Fixed SIP Baseline      : $276,886.13
+CAGR                    : 4.24%
+Max Drawdown            : 45.20%
+Total Trades            : 175
