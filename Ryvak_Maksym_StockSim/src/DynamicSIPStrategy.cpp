@@ -63,19 +63,25 @@ SimResult DynamicSIPStrategy::backtest(PriceHistory* history,
             else {
                 double currentMA = ma200.getAverage();
 
+                // Calculate how far below the MA the current price is (percentage)
+                double delta = 0.0;
                 if (node.close < currentMA) {
-                    // BEAR MARKET: Turn off the tap. Hoard cash.
-                    investAmount = 0.0;
-                } else {
-                    // BULL MARKET: Turn on the tap. 
-                    // Deploy regular monthly capital PLUS a percentage of our hoarded war chest.
-                    // We map the 'multiplier' parameter to this drain rate (e.g., 0.33)
+                    delta = ((currentMA - node.close) / currentMA) * 100.0;
+                }
+
+                // If price > MA (Bull Market) OR Price has crashed extremely far below MA (Rubber Band Snap)
+                if (node.close > currentMA || delta >= dipThreshold) {
+                    
+                    // Deploy regular monthly capital PLUS a percentage of our hoarded war chest
                     double excessCash = cash - monthlyCapital;
                     investAmount = monthlyCapital;
                     
                     if (excessCash > 0.0) {
                         investAmount += (excessCash * multiplier); 
                     }
+                } else {
+                    // Normal Bear Market: Turn off the tap. Hoard cash.
+                    investAmount = 0.0;
                 }
             }
 
@@ -121,7 +127,8 @@ SimResult DynamicSIPStrategy::backtest(PriceHistory* history,
 string DynamicSIPStrategy::getName() const {
     ostringstream out;
     out << fixed << setprecision(2)
-        << "Dynamic SIP (drain rate=" << multiplier << ")";
+        << "Dynamic SIP (Regime, panic=" << dipThreshold 
+        << "%, drain=" << multiplier << ")";
     return out.str();
 }
 

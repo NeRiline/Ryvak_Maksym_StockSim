@@ -6,16 +6,16 @@
  * Student ID   : 116607096
  *
  * Instructions:
- *   1. Implement all classes listed in the header files under include/.
- *   2. Create corresponding .cpp files in src/ for each header.
- *   3. Place your Yahoo Finance CSV files in data/ (SPY.csv, AAPL.csv, TSLA.csv).
- *   4. Complete the menu handlers below — each case should call the relevant
- *      class methods you implemented.
- *   5. Do NOT use std::queue, std::stack, std::list, std::map, std::unordered_map,
- *      or any external library. std::vector, std::string, std::sort are allowed.
+ * 1. Implement all classes listed in the header files under include/.
+ * 2. Create corresponding .cpp files in src/ for each header.
+ * 3. Place your Yahoo Finance CSV files in data/ (SPY.csv, AAPL.csv, TSLA.csv).
+ * 4. Complete the menu handlers below — each case should call the relevant
+ * class methods you implemented.
+ * 5. Do NOT use std::queue, std::stack, std::list, std::map, std::unordered_map,
+ * or any external library. std::vector, std::string, std::sort are allowed.
  *
  * Compile with C++11 or later:
- *   g++ -std=c++11 -Iinclude src/\*.cpp main.cpp -o stocksim
+ * g++ -std=c++11 -Iinclude src/*.cpp main.cpp -o stocksim
  */
 
 #include <iostream>
@@ -63,7 +63,7 @@ void menuQueueOrder(Portfolio& portfolio);
 void menuExecuteOrder(Portfolio& portfolio);
 void menuUndoTrade(Portfolio& portfolio);
 void menuRunStrategy(StockManager<ETF>& etfManager, StockManager<Stock>& stockManager);
-void menuCompareStrategies(StockManager<ETF>& etfManager);
+void menuCompareStrategies(StockManager<ETF>& etfManager, StockManager<Stock>& stockManager);
 void menuParameterSweep(StockManager<ETF>& etfManager);
 void menuPortfolioSummary(Portfolio& portfolio);
 void menuTradeHistory(Portfolio& portfolio);
@@ -145,7 +145,7 @@ int main() {
             case 10: menuExecuteOrder(portfolio);                                   break;
             case 11: menuUndoTrade(portfolio);                                      break;
             case 12: menuRunStrategy(etfManager, stockManager);                     break;
-            case 13: menuCompareStrategies(etfManager);                             break;
+            case 13: menuCompareStrategies(etfManager, stockManager);               break;
             case 14: menuPortfolioSummary(portfolio);                               break;
             case 15: menuTradeHistory(portfolio);                                   break;
             case 16: menuParameterSweep(etfManager);                                break;
@@ -549,10 +549,27 @@ void menuRunStrategy(StockManager<ETF>& etfManager, StockManager<Stock>& stockMa
 }
 
 // Prompts user for strategy parameters, then runs a backtest on the selected stock/ETF and compares all strategies head-to-head
-void menuCompareStrategies(StockManager<ETF>& etfManager) {
-    ETF* spx = etfManager.findByTicker("SPX");
-    if (!spx || !spx->getHistory()) {
-        cout << "SPX data not loaded. Please load it first.\n";
+void menuCompareStrategies(StockManager<ETF>& etfManager, StockManager<Stock>& stockManager) {
+    cout << "Enter ticker to compare strategies (e.g., SPX, NVDA, AMZN): ";
+    string ticker;
+    getline(cin, ticker);
+
+    PriceHistory* history = nullptr;
+    
+    // Check Stocks first
+    Stock* stock = stockManager.findByTicker(ticker);
+    if (stock) {
+        history = stock->getHistory();
+    } else {
+        // If not a stock, check ETFs
+        ETF* etf = etfManager.findByTicker(ticker);
+        if (etf) {
+            history = etf->getHistory();
+        }
+    }
+
+    if (!history) {
+        cout << ticker << " data not loaded. Please load it first via Menu Option 1.\n";
         return;
     }
 
@@ -568,25 +585,26 @@ void menuCompareStrategies(StockManager<ETF>& etfManager) {
     cin.ignore(numeric_limits<streamsize>::max(), '\n');
 
     FixedSIPStrategy fixedStrategy;
-    DynamicSIPStrategy dynamic(0, 0, 0.60); // example parameters, can be changed
+    // Using your newly optimized 2D sweep parameters!
+    DynamicSIPStrategy dynamic(32.5, 0, 0.70); 
     GoldenCrossStrategy golden;
     MomentumStrategy momentum;
 
-    SimResult rFixed = fixedStrategy.backtest(spx->getHistory(), monthlyCapital, startYear, endYear);
-    SimResult rDynamic = dynamic.backtest(spx->getHistory(), monthlyCapital, startYear, endYear);
-    SimResult rGolden = golden.backtest(spx->getHistory(), monthlyCapital, startYear, endYear);
-    SimResult rMomentum = momentum.backtest(spx->getHistory(), monthlyCapital, startYear, endYear);
+    SimResult rFixed = fixedStrategy.backtest(history, monthlyCapital, startYear, endYear);
+    SimResult rDynamic = dynamic.backtest(history, monthlyCapital, startYear, endYear);
+    SimResult rGolden = golden.backtest(history, monthlyCapital, startYear, endYear);
+    SimResult rMomentum = momentum.backtest(history, monthlyCapital, startYear, endYear);
 
     // Print a formatted comparison table
-    cout << "\nStrategy Comparison (SPX)\n";
-    cout << left << setw(26) << "Strategy"
+    cout << "\nStrategy Comparison (" << ticker << ")\n";
+    cout << left << setw(35) << "Strategy"
          << right << setw(14) << "Final"
          << setw(10) << "CAGR%"
          << setw(12) << "MaxDD%"
          << setw(10) << "Trades" << "\n";
 
     auto printRow = [](const SimResult& r) {
-        cout << left << setw(26) << r.strategyName
+        cout << left << setw(35) << r.strategyName
              << right << setw(14) << fixed << setprecision(2) << r.finalValue
              << setw(10) << fixed << setprecision(2) << r.cagr
              << setw(12) << fixed << setprecision(2) << r.maxDrawdown
@@ -598,6 +616,7 @@ void menuCompareStrategies(StockManager<ETF>& etfManager) {
     printRow(rGolden);
     printRow(rMomentum);
 }
+
 // ---------------------------------------------------------------
 // Prompts user for parameter ranges, then runs a grid search over the DynamicSIPStrategy parameters and stores results in a BST
 void menuParameterSweep(StockManager<ETF>& etfManager) {
